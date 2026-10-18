@@ -134,7 +134,6 @@ def new_gh(
         frontmatter |= {
             "owner": ref.owner,
             "fork of": f"{parent['owner']['login']}/{parent['name']}" if parent else None,
-            "opened": vault.to_local(data["createdAt"]),
         }
         body = REPO_BODY
     else:

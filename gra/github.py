@@ -33,7 +33,7 @@ FIELDS = "url,number,title,author,createdAt"
 
 # Fields requested from `gh repo view`. Same rule: description, topics,
 # language etc. are left out because maintainers change them.
-REPO_FIELDS = "url,createdAt,parent"
+REPO_FIELDS = "url,parent"
 
 
 @dataclass(frozen=True)
