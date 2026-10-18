@@ -21,8 +21,32 @@ new_app = typer.Typer(
 )
 app.add_typer(new_app, name="new")
 
-# Folder (relative to the vault root) that GitHub PR/issue notes go in.
+# Folders (relative to the vault root) that GitHub notes go in.
 GITHUB_DIR = "Issues and PRs"
+REPOS_DIR = "Repos"
+
+# Body of a repo note: an embedded Base listing the PR/issue notes whose
+# `repo` matches this note's, so the repo page acts as a hub for them.
+REPO_BODY = """
+```base
+filters:
+  and:
+    - note.repo == this.repo
+    - note.github != "repo"
+views:
+  - type: table
+    name: PRs and issues
+    order:
+      - note.github
+      - note.number
+      - note.title
+      - note.author
+      - note.opened
+    sort:
+      - property: note.opened
+        direction: DESC
+```
+"""
 
 VaultOption = Annotated[
     Path,
@@ -63,16 +87,17 @@ def _warn(message: str) -> None:
 def new_gh(
     url: Annotated[
         str,
-        typer.Argument(help="URL of the GitHub pull request or issue."),
+        typer.Argument(help="URL of the GitHub repository, pull request or issue."),
     ],
     domain: DomainOption = None,
     vault_dir: VaultOption = vault.DEFAULT_VAULT,
 ) -> None:
-    """Create a note for a GitHub pull request or issue.
+    """Create a note for a GitHub repository, pull request or issue.
 
-    The note is written to "Issues and PRs/OWNER-REPO-NUMBER.md" with
-    frontmatter filled from GitHub (only fields that never change), and an
-    empty body.
+    A PR/issue note is written to "Issues and PRs/OWNER-REPO-NUMBER.md" with
+    an empty body. A repo note is written to "Repos/OWNER-REPO.md" with an
+    embedded Base listing that repo's PR/issue notes. Frontmatter is filled
+    from GitHub, using only fields that never change.
     """
     try:
         ref = github.parse_url(url)
@@ -80,7 +105,10 @@ def new_gh(
         raise _err(str(exc))
 
     # The file name comes from the URL alone, so check it before fetching.
-    path = vault_dir.expanduser() / GITHUB_DIR / f"{ref.owner}-{ref.repo}-{ref.number}.md"
+    if ref.kind == "repo":
+        path = vault_dir.expanduser() / REPOS_DIR / f"{ref.owner}-{ref.repo}.md"
+    else:
+        path = vault_dir.expanduser() / GITHUB_DIR / f"{ref.owner}-{ref.repo}-{ref.number}.md"
     try:
         vault.check_writable(path)
     except (FileExistsError, FileNotFoundError) as exc:
@@ -100,14 +128,26 @@ def new_gh(
         "github": ref.kind,
         "url": data["url"],
         "repo": ref.slug,
-        "number": data["number"],
-        "title": data["title"],
-        "author": (data.get("author") or {}).get("login", ""),
-        "opened": vault.to_local(data["createdAt"]),
     }
+    if ref.kind == "repo":
+        parent = data.get("parent")
+        frontmatter |= {
+            "owner": ref.owner,
+            "fork of": f"{parent['owner']['login']}/{parent['name']}" if parent else None,
+            "opened": vault.to_local(data["createdAt"]),
+        }
+        body = REPO_BODY
+    else:
+        frontmatter |= {
+            "number": data["number"],
+            "title": data["title"],
+            "author": (data.get("author") or {}).get("login", ""),
+            "opened": vault.to_local(data["createdAt"]),
+        }
+        body = ""
 
     try:
-        vault.write_page(path, vault.render(frontmatter))
+        vault.write_page(path, vault.render(frontmatter, body))
     except (FileExistsError, FileNotFoundError) as exc:
         raise _err(str(exc))
 
