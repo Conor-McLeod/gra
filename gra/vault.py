@@ -8,6 +8,7 @@ existing one.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -70,6 +71,26 @@ def render(frontmatter: dict[str, Any], body: str = "") -> str:
         width=10_000,
     )
     return f"---\n{yaml_text}---\n{body}"
+
+
+# Characters that can't go in a page's file name: illegal on some OS
+# (/ \ : * ? " < > |) or meaningful in Obsidian links (# ^ [ ]).
+_UNSAFE_FILENAME_RE = re.compile(r'[/\\:*?"<>|#^\[\]]')
+
+
+def safe_filename(title: str) -> str:
+    """Turn a page title into a file name stem (no ``.md``).
+
+    Removes characters that are illegal in file names or break Obsidian
+    links, keeps spaces (the vault uses spaced titles), collapses runs of
+    whitespace and drops leading dots so the page isn't hidden. Raises
+    ``ValueError`` if nothing is left.
+    """
+    name = _UNSAFE_FILENAME_RE.sub("", title)
+    name = " ".join(name.split()).lstrip(".").strip()
+    if not name:
+        raise ValueError(f"title {title!r} leaves no usable file name")
+    return name
 
 
 def check_writable(path: Path) -> None:
