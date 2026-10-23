@@ -7,7 +7,7 @@ from typing import Annotated
 
 import typer
 
-from gra import github, vault
+from gra import github, notion, vault
 
 app = typer.Typer(
     add_completion=False,
@@ -23,6 +23,9 @@ app.add_typer(new_app, name="new")
 
 # Folder (relative to the vault root) that GitHub PR/issue notes go in.
 GITHUB_DIR = "Issues and PRs"
+
+# Folder (relative to the vault root) that MLSys resource notes go in.
+RESOURCES_DIR = "Resources"
 
 VaultOption = Annotated[
     Path,
@@ -104,6 +107,67 @@ def new_gh(
         "title": data["title"],
         "author": (data.get("author") or {}).get("login", ""),
         "opened": vault.to_local(data["createdAt"]),
+    }
+
+    try:
+        vault.write_page(path, vault.render(frontmatter))
+    except (FileExistsError, FileNotFoundError) as exc:
+        raise _err(str(exc))
+
+    typer.secho(f"Created {path}", fg=typer.colors.GREEN)
+
+
+@new_app.command("resource")
+def new_resource(
+    page: Annotated[
+        str,
+        typer.Argument(help="URL or ID of a page in the Notion MLSys resources database."),
+    ],
+    vault_dir: VaultOption = vault.DEFAULT_VAULT,
+) -> None:
+    """Create a note for a resource in the Notion MLSys resources database.
+
+    The note is written to "Resources/TITLE.md" with frontmatter filled from
+    the Notion page, and an empty body. domain comes from the page's Topic:
+    Notion is the source of truth, so recategorise there. Status is left out
+    on purpose, since it changes over time.
+    """
+    try:
+        ref = notion.parse_ref(page)
+    except ValueError as exc:
+        raise _err(str(exc))
+
+    # The file name comes from the title, so only the folder can be checked
+    # before fetching; write_page still refuses to overwrite.
+    folder = vault_dir.expanduser() / RESOURCES_DIR
+    if not folder.is_dir():
+        raise _err(f"{folder} does not exist")
+
+    try:
+        fields = notion.resource_fields(notion.fetch(ref))
+    except RuntimeError as exc:
+        raise _err(str(exc))
+
+    if not fields["title"]:
+        raise _err(f"Notion page {ref.id} has no Title")
+    try:
+        path = folder / f"{vault.safe_filename(fields['title'])}.md"
+    except ValueError as exc:
+        raise _err(str(exc))
+
+    if not fields["topics"]:
+        _warn(
+            "the Notion page has no Topic; the note will show up under 'Needs a domain' "
+            "(set Topic in Notion)"
+        )
+
+    frontmatter: dict[str, object] = {
+        "created at": vault.now(),
+        "domain": fields["topics"] or None,
+        "resource": fields["type"],
+        "notion": ref.url,
+        "url": fields["url"],
+        "title": fields["title"],
     }
 
     try:
